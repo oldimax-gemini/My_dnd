@@ -5,94 +5,83 @@ from flask import Flask
 import telebot
 import google.generativeai as genai
 
-# --- ВЕБ-СЕРВЕР ДЛЯ СТАТУСА LIVE ---
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (СТАТУС LIVE) ---
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "The Dungeon Master is online and guarding the realm!", 200
+    return "Мастер Подземелий на связи и охраняет королевство!", 200
 
 # --- КОНФИГУРАЦИЯ ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_KEY = os.environ.get('GEMINI_KEY')
 
+# "gemini-1.5-flash" — лучший выбор для игры в группе (быстрый и надежный)
+SELECTED_MODEL_TYPE = "gemini-1.5-flash" 
+
 # Инициализация Gemini
 model = None
 
 def setup_ai():
+    """Настройка нейросети и правил поведения Мастера"""
     global model
     if not GEMINI_KEY:
-        print("--- [ERROR] GEMINI_KEY не найден в переменных окружения!")
+        print("--- [ERROR] Ключ GEMINI_KEY не найден в настройках!")
         return
 
     try:
         genai.configure(api_key=GEMINI_KEY)
         
-        # Поиск доступных моделей
-        available_models = []
-        try:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    available_models.append(m.name)
-        except Exception as list_err:
-            print(f"--- [ERROR] Не удалось получить список моделей: {list_err}")
-
-        # Выбор лучшей модели (приоритет 2.5 или 2.0)
-        priority_list = [
-            "models/gemini-2.5-flash", 
-            "models/gemini-2.0-flash", 
-            "models/gemini-1.5-flash"
-        ]
-        
-        selected_model_name = next((m for m in priority_list if m in available_models), 
-                                  available_models[0] if available_models else "models/gemini-1.5-flash")
-
-        print(f"--- [LOG] Выбрана модель для игры: {selected_model_name}")
-
+        # Инструкции для Мастера Подземелий (DM)
         SYSTEM_PROMPT = """
-        Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
-        Твоя цель — вести одно общее приключение для группы игроков в мире D&D 5e.
+        Ты — мудрый, добрый и невероятно творческий Мастер Подземелий (DM). 
+        Твоя миссия — вести захватывающее фэнтезийное приключение для группы друзей.
         
-        Важные правила для работы в группе:
-        1. Различай игроков: Тебе будут присылать сообщения в формате "[Имя игрока]: сообщение". 
-           Запоминай, какой персонаж (раса, класс) принадлежит каждому игроку.
-        2. Обращайся по именам: Когда отвечаешь, обращайся к конкретным героям, чтобы все понимали, к кому ты обращаешься.
-        3. Командная работа: Поощряй игроков действовать сообща.
-        4. Безопасность и атмосфера: Веди игру в стиле добрых сказок и героических легенд. Никакой жестокости или мрачных тем.
-        5. Игровой процесс: Проси игроков кидать d20 для их действий.
-        6. Язык: Общайся на русском языке, будь вежливым и эпическим Мастером.
+        Твои правила игры:
+        1. ИНДИВИДУАЛЬНОСТЬ: Игроки пишут в формате "[Имя]: сообщение". 
+           Запоминай каждого! Если Алексей — гном-кузнец, а Даша — эльфийка-лучница, 
+           всегда учитывай их особенности в описаниях.
+        2. ОБРАЗНОСТЬ: Твои описания должны быть живыми. Описывай шепот листвы, 
+           сияние древних камней и тепло костра. Сделай мир осязаемым.
+        3. ДОБРОТА И ГЕРОИЗМ: Это приключение про дружбу и отвагу. Никакой жестокости, 
+           вредных привычек или мрачных тем. Зло в твоем мире — это озорные духи, 
+           заблудшие тени или древние загадки, которые нужно решить.
+        4. НАСТАВНИЧЕСТВО: Если герои запутались, предложи им варианты: например, 
+           исследовать подозрительный куст или попробовать заговорить с мудрой совой.
+        5. ИГРОВЫЕ КОСТИ: Для важных действий (прыжок, поиск, магия) всегда проси 
+           игрока бросить d20 и описывай результат в зависимости от числа.
+        6. ЯЗЫК: Говори на русском, будь вежливым, эпичным и вдохновляющим.
         """
         
         model = genai.GenerativeModel(
-            model_name=selected_model_name,
+            model_name=SELECTED_MODEL_TYPE,
             system_instruction=SYSTEM_PROMPT
         )
-        print(f"--- [LOG] Нейросеть успешно настроена!")
+        print(f"--- [LOG] Мастер готов к работе (модель: {SELECTED_MODEL_TYPE})")
     except Exception as e:
-        print(f"--- [ERROR] Ошибка настройки нейросети: {e}")
+        print(f"--- [ERROR] Ошибка настройки ИИ: {e}")
 
 # Инициализация Телеграм Бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 game_sessions = {}
 
 def run_bot():
+    """Основной цикл работы бота с защитой от сбоев"""
     if not bot:
-        print("--- [ERROR] TELEGRAM_TOKEN не найден.")
+        print("--- [ERROR] TELEGRAM_TOKEN отсутствует.")
         return
 
-    # Очистка очереди (повторяем при каждом рестарте цикла)
     while True:
         try:
-            print("--- [LOG] Попытка запуска прослушивания Telegram...")
+            print("--- [LOG] Запуск прослушивания Telegram...")
             bot.delete_webhook(drop_pending_updates=True)
             
             @bot.message_handler(commands=['start', 'help'])
             def send_welcome(message):
                 welcome_text = (
-                    "Приветствую, герои! 🏰✨\n\n"
-                    "Я — ваш Мастер Подземелий. Теперь я умею различать каждого из вас по именам!\n\n"
-                    "Пожалуйста, представьтесь по очереди: напишите свою расу и класс. "
-                    "Например: 'Я эльф-маг по имени Лириэль'."
+                    "Приветствую, искатели приключений! 🏰✨\n\n"
+                    "Я — ваш Мастер Подземелий. Я слышу каждого из вас и готов сплести вашу историю в единую легенду.\n\n"
+                    "Представьтесь по очереди: расскажите, как зовут вашего героя, кто он по профессии и какая добрая цель ведет его вперед?"
                 )
                 bot.reply_to(message, welcome_text)
 
@@ -100,44 +89,55 @@ def run_bot():
             def handle_game_step(message):
                 chat_id = message.chat.id
                 user_name = message.from_user.first_name or "Путешественник"
-                print(f"--- [MSG] Сообщение от {user_name} в чате {chat_id}: {message.text[:50]}...")
                 
                 if not model:
-                    bot.reply_to(message, "Магия всё еще настраивается. Попробуйте через минуту.")
+                    bot.reply_to(message, "Магия временно восстанавливается. Попробуйте через минуту!")
                     return
 
+                # Создаем общую сессию для чата (группы)
                 if chat_id not in game_sessions:
-                    print(f"--- [LOG] Начало приключения в группе: {chat_id}")
                     game_sessions[chat_id] = model.start_chat(history=[])
                 
                 chat = game_sessions[chat_id]
+                # Форматируем сообщение для ИИ, чтобы он различал людей
+                full_message = f"[{user_name}]: {message.text}"
                 
-                try:
-                    bot.send_chat_action(chat_id, 'typing')
-                    full_message = f"[{user_name}]: {message.text}"
-                    response = chat.send_message(full_message)
-                    
-                    if response and response.text:
-                        bot.reply_to(message, response.text)
-                    else:
-                        bot.reply_to(message, "Мастер задумался... Попробуйте еще раз.")
-                except Exception as e:
-                    print(f"--- [ERROR] Ошибка при обработке сообщения: {e}")
-                    bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
+                # Попытки отправить сообщение с обработкой лимитов
+                max_attempts = 3
+                for i in range(max_attempts):
+                    try:
+                        bot.send_chat_action(chat_id, 'typing')
+                        response = chat.send_message(full_message)
+                        
+                        if response and response.text:
+                            bot.reply_to(message, response.text)
+                            return 
+                        break
+                    except Exception as e:
+                        if "429" in str(e):
+                            if i < max_attempts - 1:
+                                time.sleep(3) # Ждем перед повтором
+                                continue
+                            else:
+                                bot.reply_to(message, "Мастеру нужно перевести дух (лимит запросов превышен). Сделайте паузу на 30 секунд! 🕯️")
+                        else:
+                            print(f"--- [ERROR] Ошибка Gemini: {e}")
+                            bot.reply_to(message, "Магические потоки перепутались. Попробуйте еще раз!")
+                        break
 
-            # Используем polling с параметрами для стабильности
+            # Бесконечное ожидание сообщений
             bot.polling(non_stop=True, interval=0, timeout=20)
             
         except Exception as e:
-            print(f"--- [ERROR] Цикл бота прерван: {e}. Перезапуск через 5 сек...")
+            print(f"--- [ERROR] Потеряна связь: {e}. Перезапуск через 5 секунд...")
             time.sleep(5)
 
+# Запуск ИИ и Бота в фоновом потоке
 if TELEGRAM_TOKEN:
     setup_ai()
-    # Запускаем поток бота
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+    threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
+    # Запуск Flask-сервера
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
