@@ -1,26 +1,21 @@
 import os
 import threading
-from flask import Flask
 import telebot
 import google.generativeai as genai
+from flask import Flask
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+# --- ВЕБ-СЕРВЕР (ДЛЯ СТАТУСА LIVE НА RENDER) ---
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
     return "Мастер Подземелий на связи и охраняет королевство!", 200
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    print(f"Запуск веб-сервера на порту {port}...")
-    app.run(host='0.0.0.0', port=port)
-
 # --- НАСТРОЙКИ ТЕЛЕГРАМ И GEMINI ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GEMINI_KEY = os.environ.get('GEMINI_KEY')
 
-# Инициализация Gemini
+# Настройка Gemini
 model = None
 if GEMINI_KEY:
     try:
@@ -29,11 +24,11 @@ if GEMINI_KEY:
         Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
         Твоя цель — вести увлекательное фэнтезийное приключение в мире D&D 5e.
         Правила поведения:
-        1. Описывай мир красиво и атмосферно: сияние древних рун, шепот ветра, дружелюбные города.
-        2. Будь добрым наставником. Помогай игрокам принимать решения и подсказывай правила.
+        1. Описывай мир красиво и атмосферно: сияние древних рун, шепот ветра, добрые города.
+        2. Будь добрым наставником. Помогай игрокам и подсказывай правила.
         3. Фокусируйся на героизме, разгадывании загадок и помощи жителям мира. 
-        4. Избегай мрачных или пугающих тем. Вся магия и сражения должны быть в духе добрых сказок и легенд.
-        5. Проси игроков бросать d20 для важных действий.
+        4. Избегай мрачных или пугающих тем. Вся магия и сражения — в духе добрых легенд.
+        5. Проси игроков бросать кубик d20 для важных действий.
         6. Веди игру на русском языке в вежливом и эпическом стиле.
         """
         model = genai.GenerativeModel(
@@ -72,9 +67,8 @@ def run_bot():
     def handle_game_step(message):
         chat_id = message.chat.id
         
-        # Проверка, инициализирована ли модель
         if model is None:
-            bot.reply_to(message, "Ошибка конфигурации: API ключ нейросети не найден или недействителен. Проверьте настройки Render.")
+            bot.reply_to(message, "Ошибка: Ключ нейросети не найден. Проверьте настройки Render.")
             return
 
         if chat_id not in game_sessions:
@@ -86,16 +80,18 @@ def run_bot():
             bot.send_chat_action(chat_id, 'typing')
             response = chat.send_message(message.text)
             bot.reply_to(message, response.text)
-            
         except Exception as e:
-            # Выводим подробную ошибку в логи Render
-            print(f"Ошибка при общении с нейросетью: {e}")
-            bot.reply_to(message, "Магические потоки перепутались. Попробуйте отправить сообщение еще раз через пару секунд.")
+            print(f"Ошибка API Gemini: {e}")
+            bot.reply_to(message, "Магические потоки немного запутались. Попробуйте еще раз через пару секунд!")
 
     print("Бот готов к приключениям!")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
 
+# Запускаем бота в отдельном потоке сразу при запуске файла
+if TELEGRAM_TOKEN:
+    threading.Thread(target=run_bot, daemon=True).start()
+
 if __name__ == "__main__":
-    if TELEGRAM_TOKEN:
-        threading.Thread(target=run_bot, daemon=True).start()
-    run_flask()
+    # Локальный запуск (для тестов)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
