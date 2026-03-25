@@ -80,61 +80,63 @@ def run_bot():
         print("--- [ERROR] TELEGRAM_TOKEN не найден.")
         return
 
-    try:
-        bot.delete_webhook(drop_pending_updates=True)
-        print("--- [LOG] Очередь Telegram очищена.")
-    except Exception as e:
-        print(f"--- [WARNING] Не удалось очистить очередь: {e}")
-
-    @bot.message_handler(commands=['start', 'help'])
-    def send_welcome(message):
-        welcome_text = (
-            "Приветствую, герои! 🏰✨\n\n"
-            "Я — ваш Мастер Подземелий. Теперь я умею различать каждого из вас по именам!\n\n"
-            "Пожалуйста, представьтесь по очереди: напишите свою расу и класс. "
-            "Например: 'Я эльф-маг по имени Лириэль'."
-        )
-        bot.reply_to(message, welcome_text)
-
-    @bot.message_handler(func=lambda message: True)
-    def handle_game_step(message):
-        chat_id = message.chat.id
-        user_name = message.from_user.first_name or "Путешественник"
-        
-        if not model:
-            bot.reply_to(message, "Магия всё еще настраивается. Попробуйте через минуту.")
-            return
-
-        # Используем chat_id, чтобы вся группа участвовала в одной истории
-        if chat_id not in game_sessions:
-            print(f"--- [LOG] Начало приключения в группе: {chat_id}")
-            game_sessions[chat_id] = model.start_chat(history=[])
-        
-        chat = game_sessions[chat_id]
-        
+    # Очистка очереди (повторяем при каждом рестарте цикла)
+    while True:
         try:
-            bot.send_chat_action(chat_id, 'typing')
+            print("--- [LOG] Попытка запуска прослушивания Telegram...")
+            bot.delete_webhook(drop_pending_updates=True)
             
-            # Мы добавляем имя игрока к сообщению, чтобы ИИ знал, кто говорит
-            full_message = f"[{user_name}]: {message.text}"
-            
-            response = chat.send_message(full_message)
-            
-            if response and response.text:
-                bot.reply_to(message, response.text)
-            else:
-                bot.reply_to(message, "Мастер задумался... Попробуйте еще раз.")
-                
-        except Exception as e:
-            print(f"--- [ERROR] Gemini error: {e}")
-            bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
+            @bot.message_handler(commands=['start', 'help'])
+            def send_welcome(message):
+                welcome_text = (
+                    "Приветствую, герои! 🏰✨\n\n"
+                    "Я — ваш Мастер Подземелий. Теперь я умею различать каждого из вас по именам!\n\n"
+                    "Пожалуйста, представьтесь по очереди: напишите свою расу и класс. "
+                    "Например: 'Я эльф-маг по имени Лириэль'."
+                )
+                bot.reply_to(message, welcome_text)
 
-    print("--- [LOG] Бот начал слушать сообщения...")
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+            @bot.message_handler(func=lambda message: True)
+            def handle_game_step(message):
+                chat_id = message.chat.id
+                user_name = message.from_user.first_name or "Путешественник"
+                print(f"--- [MSG] Сообщение от {user_name} в чате {chat_id}: {message.text[:50]}...")
+                
+                if not model:
+                    bot.reply_to(message, "Магия всё еще настраивается. Попробуйте через минуту.")
+                    return
+
+                if chat_id not in game_sessions:
+                    print(f"--- [LOG] Начало приключения в группе: {chat_id}")
+                    game_sessions[chat_id] = model.start_chat(history=[])
+                
+                chat = game_sessions[chat_id]
+                
+                try:
+                    bot.send_chat_action(chat_id, 'typing')
+                    full_message = f"[{user_name}]: {message.text}"
+                    response = chat.send_message(full_message)
+                    
+                    if response and response.text:
+                        bot.reply_to(message, response.text)
+                    else:
+                        bot.reply_to(message, "Мастер задумался... Попробуйте еще раз.")
+                except Exception as e:
+                    print(f"--- [ERROR] Ошибка при обработке сообщения: {e}")
+                    bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
+
+            # Используем polling с параметрами для стабильности
+            bot.polling(non_stop=True, interval=0, timeout=20)
+            
+        except Exception as e:
+            print(f"--- [ERROR] Цикл бота прерван: {e}. Перезапуск через 5 сек...")
+            time.sleep(5)
 
 if TELEGRAM_TOKEN:
     setup_ai()
-    threading.Thread(target=run_bot, daemon=True).start()
+    # Запускаем поток бота
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
