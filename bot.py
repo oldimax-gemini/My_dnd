@@ -1,10 +1,11 @@
 import os
 import threading
+import time
+from flask import Flask
 import telebot
 import google.generativeai as genai
-from flask import Flask
 
-# --- ВЕБ-СЕРВЕР (ДЛЯ СТАТУСА LIVE НА RENDER) ---
+# --- ВЕБ-СЕРВЕР (ДЛЯ RENDER) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,12 +25,11 @@ if GEMINI_KEY:
         Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
         Твоя цель — вести увлекательное фэнтезийное приключение в мире D&D 5e.
         Правила поведения:
-        1. Описывай мир красиво и атмосферно: сияние древних рун, шепот ветра, добрые города.
-        2. Будь добрым наставником. Помогай игрокам и подсказывай правила.
-        3. Фокусируйся на героизме, разгадывании загадок и помощи жителям мира. 
-        4. Избегай мрачных или пугающих тем. Вся магия и сражения — в духе добрых легенд.
-        5. Проси игроков бросать кубик d20 для важных действий.
-        6. Веди игру на русском языке в вежливом и эпическом стиле.
+        1. Описывай мир красиво и атмосферно.
+        2. Будь добрым наставником, помогай игрокам и подсказывай правила.
+        3. Фокусируйся на героизме, разгадывании загадок и командной работе. 
+        4. Избегай мрачных или пугающих тем.
+        5. Веди игру на русском языке.
         """
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
@@ -37,7 +37,7 @@ if GEMINI_KEY:
         )
         print("Нейросеть Gemini успешно настроена.")
     except Exception as e:
-        print(f"Ошибка при настройке Gemini: {e}")
+        print(f"Ошибка настройки Gemini: {e}")
 
 # Инициализация Бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
@@ -45,53 +45,48 @@ game_sessions = {}
 
 def run_bot():
     if not bot:
-        print("КРИТИЧЕСКАЯ ОШИБКА: TELEGRAM_TOKEN не найден.")
+        print("Ошибка: Токен Telegram не найден.")
         return
 
-    # Очистка очереди сообщений
+    # РЕШЕНИЕ ОШИБКИ 409: Очищаем старые соединения перед запуском
     try:
+        print("Сброс старых соединений Telegram...")
         bot.delete_webhook(drop_pending_updates=True)
-    except:
-        pass
+        time.sleep(1) # Короткая пауза для стабильности
+    except Exception as e:
+        print(f"Заметка по webhook: {e}")
 
     @bot.message_handler(commands=['start', 'help'])
     def send_welcome(message):
-        welcome_text = (
-            "Приветствую, герои! 🏰✨\n\n"
-            "Я — ваш верный Мастер Подземелий. Вместе мы напишем легенду о дружбе и отваге! "
-            "Опишите своего персонажа: кто вы и какая у вас цель? Или просто скажите 'Начнем!', и я предложу вам роль."
-        )
-        bot.reply_to(message, welcome_text)
+        bot.reply_to(message, "Приветствую, герои! 🏰 Я ваш Мастер Подземелий. Опишите персонажа и начнем!")
 
     @bot.message_handler(func=lambda message: True)
     def handle_game_step(message):
         chat_id = message.chat.id
-        
         if model is None:
-            bot.reply_to(message, "Ошибка: Ключ нейросети не найден. Проверьте настройки Render.")
+            bot.reply_to(message, "Ошибка: Настройте API ключ нейросети.")
             return
 
         if chat_id not in game_sessions:
             game_sessions[chat_id] = model.start_chat(history=[])
         
-        chat = game_sessions[chat_id]
-        
         try:
             bot.send_chat_action(chat_id, 'typing')
-            response = chat.send_message(message.text)
+            response = game_sessions[chat_id].send_message(message.text)
             bot.reply_to(message, response.text)
         except Exception as e:
-            print(f"Ошибка API Gemini: {e}")
-            bot.reply_to(message, "Магические потоки немного запутались. Попробуйте еще раз через пару секунд!")
+            print(f"Ошибка API: {e}")
+            bot.reply_to(message, "Магия немного запуталась. Попробуйте еще раз!")
 
-    print("Бот готов к приключениям!")
+    print("Бот запускает прослушивание сообщений...")
+    # Используем long_polling для большей стабильности на сервере
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
 
-# Запускаем бота в отдельном потоке сразу при запуске файла
+# Запуск бота в отдельном потоке (работает при импорте gunicorn)
 if TELEGRAM_TOKEN:
     threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    # Локальный запуск (для тестов)
+    # Локальный запуск
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
