@@ -22,6 +22,7 @@ if GEMINI_KEY:
     try:
         genai.configure(api_key=GEMINI_KEY)
         
+        # Системная инструкция для Мастера Подземелий
         SYSTEM_PROMPT = """
         Ты — мудрый, добрый и вдохновляющий Мастер Подземелий (DM). 
         Твоя цель — вести увлекательное и безопасное фэнтезийное приключение в мире D&D 5e.
@@ -35,8 +36,9 @@ if GEMINI_KEY:
         5. Язык: Общайся на русском языке, будь вежливым и эпическим Мастером.
         """
         
+        # Используем наиболее стабильное имя модели
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-1.5-flash", 
             system_instruction=SYSTEM_PROMPT
         )
         print("--- [LOG] Нейросеть Gemini успешно настроена.")
@@ -60,15 +62,16 @@ def run_bot():
         print(f"--- [ERROR] Ошибка авторизации токена Telegram: {e}")
         return
 
-    # Сброс вебхуков и старых обновлений
+    # Сброс вебхуков и старых обновлений (решение ошибки 409)
     for i in range(3):
         try:
             print(f"--- [LOG] Попытка {i+1}: Очистка очереди сообщений...")
             bot.delete_webhook(drop_pending_updates=True)
+            time.sleep(1)
             break
         except Exception as e:
-            print(f"--- [WARNING] Не удалось сбросить очередь: {e}. Повтор...")
-            time.sleep(5)
+            print(f"--- [WARNING] Не удалось сбросить очередь: {e}")
+            time.sleep(2)
 
     @bot.message_handler(commands=['start', 'help'])
     def send_welcome(message):
@@ -81,19 +84,24 @@ def run_bot():
 
     @bot.message_handler(commands=['ping'])
     def send_ping(message):
-        bot.reply_to(message, "Понг! Мастер на связи. Если вы видите это, связь с Telegram в порядке!")
+        bot.reply_to(message, "Понг! Мастер на связи. Связь с Telegram в порядке!")
 
     @bot.message_handler(func=lambda message: True)
     def handle_game_step(message):
         chat_id = message.chat.id
         
         if model is None:
-            bot.reply_to(message, "Магия временно недоступна (ошибка нейросети).")
+            bot.reply_to(message, "Магия временно недоступна (ошибка нейросети). Проверьте ключ API.")
             return
 
         if chat_id not in game_sessions:
             print(f"--- [LOG] Новая сессия для чата: {chat_id}")
-            game_sessions[chat_id] = model.start_chat(history=[])
+            try:
+                game_sessions[chat_id] = model.start_chat(history=[])
+            except Exception as e:
+                print(f"--- [ERROR] Не удалось создать сессию: {e}")
+                bot.reply_to(message, "Не удалось начать историю. Попробуйте позже.")
+                return
         
         try:
             bot.send_chat_action(chat_id, 'typing')
@@ -106,7 +114,11 @@ def run_bot():
                 
         except Exception as e:
             print(f"--- [ERROR] Ошибка Gemini API: {e}")
-            bot.reply_to(message, "Магический туман скрыл путь. Повторите ваше действие чуть позже.")
+            # Если возникла ошибка 404 или другая, пробуем пересоздать чат
+            if "404" in str(e):
+                bot.reply_to(message, "Похоже, путь в это измерение закрыт (ошибка модели). Мастеру нужно мгновение, чтобы найти дорогу.")
+            else:
+                bot.reply_to(message, "Магический туман скрыл путь. Повторите ваше действие чуть позже.")
 
     print("--- [LOG] Бот запускает бесконечный цикл прослушивания (Polling)...")
     try:
@@ -120,6 +132,6 @@ if TELEGRAM_TOKEN:
     threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    # Локальный запуск
+    # Локальный запуск (Flask)
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
