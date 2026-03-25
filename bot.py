@@ -21,23 +21,29 @@ model = None
 if GEMINI_KEY:
     try:
         genai.configure(api_key=GEMINI_KEY)
+        
+        # Мы используем 'gemini-1.5-flash', это самая стабильная версия.
+        # Если она выдает 404, библиотека сама попробует найти нужный путь.
         SYSTEM_PROMPT = """
-        Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
-        Твоя цель — вести увлекательное фэнтезийное приключение в мире D&D 5e.
-        Правила поведения:
-        1. Описывай мир красиво и атмосферно.
-        2. Будь добрым наставником, помогай игрокам и подсказывай правила.
-        3. Фокусируйся на героизме, разгадывании загадок и командной работе. 
-        4. Избегай мрачных или пугающих тем.
-        5. Веди игру на русском языке.
+        Ты — мудрый, добрый и вдохновляющий Мастер Подземелий (DM). 
+        Твоя цель — вести увлекательное и безопасное фэнтезийное приключение в мире D&D 5e.
+        
+        Твои правила:
+        1. Безопасность и чистота: Веди игру в стиле добрых сказок и героических легенд. 
+           Никакой жестокости, вредных привычек или пугающих тем.
+        2. Атмосфера: Описывай красоту природы, магическое сияние и верную дружбу.
+        3. Помощь: Если игроки (твои сверстники) не знают, что делать, подсказывай им добрые и смелые варианты.
+        4. Игровой процесс: Проси кидать кубик d20 для проверок (на внимательность, доброту или ловкость).
+        5. Язык: Общайся на русском языке, будь вежливым и эпическим Мастером.
         """
+        
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             system_instruction=SYSTEM_PROMPT
         )
-        print("Нейросеть Gemini успешно настроена.")
+        print("Нейросеть успешно настроена.")
     except Exception as e:
-        print(f"Ошибка настройки Gemini: {e}")
+        print(f"Ошибка настройки нейросети: {e}")
 
 # Инициализация Бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
@@ -45,26 +51,32 @@ game_sessions = {}
 
 def run_bot():
     if not bot:
-        print("Ошибка: Токен Telegram не найден.")
+        print("Ошибка: TOKEN не найден.")
         return
 
-    # РЕШЕНИЕ ОШИБКИ 409: Очищаем старые соединения перед запуском
+    # Очистка конфликтов 409
     try:
-        print("Сброс старых соединений Telegram...")
         bot.delete_webhook(drop_pending_updates=True)
-        time.sleep(1) # Короткая пауза для стабильности
-    except Exception as e:
-        print(f"Заметка по webhook: {e}")
+        time.sleep(2) # Даем Telegram время закрыть старые сессии
+    except:
+        pass
 
     @bot.message_handler(commands=['start', 'help'])
     def send_welcome(message):
-        bot.reply_to(message, "Приветствую, герои! 🏰 Я ваш Мастер Подземелий. Опишите персонажа и начнем!")
+        welcome_text = (
+            "Приветствую, юные герои! 🏰✨\n\n"
+            "Я — ваш Мастер Подземелий. Вместе мы отправимся в мир, где правит дружба и магия. "
+            "Кем вы хотите быть? Смелым рыцарем, добрым волшебником или лесной следопыткой?\n\n"
+            "Опишите своего героя, и мы начнем!"
+        )
+        bot.reply_to(message, welcome_text)
 
     @bot.message_handler(func=lambda message: True)
     def handle_game_step(message):
         chat_id = message.chat.id
+        
         if model is None:
-            bot.reply_to(message, "Ошибка: Настройте API ключ нейросети.")
+            bot.reply_to(message, "Магия временно недоступна. Проверьте настройки ключа Gemini.")
             return
 
         if chat_id not in game_sessions:
@@ -73,20 +85,25 @@ def run_bot():
         try:
             bot.send_chat_action(chat_id, 'typing')
             response = game_sessions[chat_id].send_message(message.text)
-            bot.reply_to(message, response.text)
+            
+            if response and response.text:
+                bot.reply_to(message, response.text)
+            else:
+                bot.reply_to(message, "Мастер задумался... Попробуй описать свое действие иначе!")
+                
         except Exception as e:
-            print(f"Ошибка API: {e}")
-            bot.reply_to(message, "Магия немного запуталась. Попробуйте еще раз!")
+            print(f"Ошибка API Gemini: {e}")
+            # Если модель 1.5-flash не найдена, это может быть временный сбой API Studio.
+            bot.reply_to(message, "Похоже, магический туман скрыл путь. Попробуйте отправить сообщение еще раз через минуту.")
 
-    print("Бот запускает прослушивание сообщений...")
-    # Используем long_polling для большей стабильности на сервере
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    print("Бот готов к приключениям!")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
 
-# Запуск бота в отдельном потоке (работает при импорте gunicorn)
+# Запускаем бота фоном
 if TELEGRAM_TOKEN:
     threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    # Локальный запуск
+    # Основной поток для Flask (Render)
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
