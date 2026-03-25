@@ -36,30 +36,34 @@ def setup_ai():
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
                     available_models.append(m.name)
+                    print(f"--- [LOG] Найдена модель: {m.name}")
         except Exception as list_err:
             print(f"--- [ERROR] Не удалось получить список моделей: {list_err}")
 
-        # Список приоритетных моделей (от новейших к стабильным)
+        # Список приоритетов имен моделей (пробуем разные варианты написания)
         priority_list = [
-            "models/gemini-2.5-flash", 
-            "models/gemini-2.0-flash", 
-            "models/gemini-1.5-flash",
+            "models/gemini-1.5-flash-latest",
+            "models/gemini-1.5-flash", 
+            "models/gemini-2.0-flash",
             "models/gemini-pro"
         ]
         
         selected_model_name = None
+        # Сначала ищем по нашему списку приоритетов среди доступных
         for p_model in priority_list:
             if p_model in available_models:
                 selected_model_name = p_model
                 break
         
+        # Если ничего из списка не подошло, берем первую попавшуюся рабочую из тех, что вернул API
         if not selected_model_name and available_models:
             selected_model_name = available_models[0]
         
+        # Если API ничего не вернул, пробуем стандартное имя как последний шанс
         if not selected_model_name:
-            selected_model_name = "models/gemini-1.5-flash"
+            selected_model_name = "models/gemini-1.5-flash-latest"
 
-        print(f"--- [LOG] Выбрана модель для игры: {selected_model_name}")
+        print(f"--- [LOG] Итоговый выбор модели для игры: {selected_model_name}")
 
         SYSTEM_PROMPT = """
         Ты — мудрый, добрый и вдохновляющий Мастер Подземелий (DM). 
@@ -69,7 +73,7 @@ def setup_ai():
         1. ИНДИВИДУАЛЬНОСТЬ: Игроки пишут в формате "[Имя]: сообщение". Запоминай героев! 
            Обращайся к игрокам по их именам и учитывай их выбранные классы/расы.
         2. АТМОСФЕРА: Описывай мир красиво и атмосферно: шепот ветра, сияние магии, запахи леса.
-        3. ДОБРОТА: Это героическая сказка. Избегай жестокости, вредных привычек и мрачных тем.
+        3. ДОБРОТА: Это героическая сказка про дружбу и отвагу. Никакой жестокости или пугающих тем.
         4. ПОМОЩЬ: Подсказывай игрокам варианты действий, если они зашли в тупик.
         5. КОСТИ: Проси кидать d20 для важных действий и описывай результат эпично.
         6. ЯЗЫК: Говори на русском, будь вежливым и вдохновляющим рассказчиком.
@@ -79,7 +83,7 @@ def setup_ai():
             model_name=selected_model_name,
             system_instruction=SYSTEM_PROMPT
         )
-        print(f"--- [LOG] Нейросеть успешно настроена!")
+        print(f"--- [LOG] Нейросеть успешно настроена на {selected_model_name}!")
     except Exception as e:
         print(f"--- [ERROR] Ошибка настройки нейросети: {e}")
 
@@ -93,7 +97,7 @@ if bot:
     def send_welcome(message):
         welcome_text = (
             "Приветствую, герои! 🏰✨\n\n"
-            "Я — ваш Мастер Подземелий. Я вижу каждого из вас и готов сплести вашу историю в единую легенду!\n\n"
+            "Я — ваш Мастер Подземелий. Я вижу каждого из вас по именам и готов начать нашу легенду!\n\n"
             "Представьтесь по очереди: расскажите, как зовут вашего героя, кто он (раса/класс) и какая добрая цель ведет его вперед?"
         )
         bot.reply_to(message, welcome_text)
@@ -103,7 +107,7 @@ if bot:
         chat_id = message.chat.id
         user_name = message.from_user.first_name or "Путешественник"
         
-        print(f"--- [MSG] Сообщение от {user_name} в чате {chat_id}")
+        print(f"--- [MSG] Сообщение от {user_name} в чате {chat_id}: {message.text[:50]}")
         
         if not model:
             bot.reply_to(message, "Магия всё еще настраивается. Подождите минуту.")
@@ -136,11 +140,11 @@ if bot:
                         time.sleep(3)
                         continue
                     else:
-                        bot.reply_to(message, "Мастер немного устал от быстрого темпа. Сделайте паузу на 20-30 секунд! ✨")
+                        bot.reply_to(message, "Мастер немного устал. Сделайте паузу на 20-30 секунд! ✨")
                 elif "404" in error_str:
-                    print("--- [ERROR] Модель не найдена. Перенастройка...")
+                    print("--- [ERROR] Модель не найдена (404). Пробую перенастройку...")
                     setup_ai()
-                    bot.reply_to(message, "Мастер ищет новый путь... Попробуйте отправить сообщение еще раз!")
+                    bot.reply_to(message, "Мастер ищет новый путь в это измерение... Попробуйте отправить сообщение еще раз!")
                 else:
                     print(f"--- [ERROR] Ошибка Gemini: {error_str}")
                     bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
@@ -152,9 +156,10 @@ def run_bot():
     
     while True:
         try:
-            print("--- [LOG] Сброс вебхука и запуск прослушивания Telegram...")
+            print("--- [LOG] Подготовка к запуску Telegram...")
             bot.delete_webhook(drop_pending_updates=True)
-            time.sleep(1) # Короткая пауза для стабильности Render
+            time.sleep(2) # Пауза для стабильности Render при деплое
+            print("--- [LOG] Запуск прослушивания Telegram...")
             bot.polling(non_stop=True, interval=0, timeout=20)
         except Exception as e:
             if "Conflict" in str(e):
@@ -170,6 +175,6 @@ if TELEGRAM_TOKEN:
     threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    # Запуск Flask-сервера (Render использует gunicorn bot:app)
+    # Запуск Flask-сервера
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
