@@ -28,8 +28,7 @@ def setup_ai():
     try:
         genai.configure(api_key=GEMINI_KEY)
         
-        # Получаем список реально доступных моделей для этого ключа
-        print("--- [LOG] Поиск доступных моделей...")
+        # Поиск доступных моделей
         available_models = []
         try:
             for m in genai.list_models():
@@ -38,48 +37,37 @@ def setup_ai():
         except Exception as list_err:
             print(f"--- [ERROR] Не удалось получить список моделей: {list_err}")
 
-        # Список приоритетных моделей (от новейших к стабильным)
-        # В твоих логах были gemini-2.5-flash и gemini-2.0-flash
+        # Выбор лучшей модели (приоритет 2.5 или 2.0)
         priority_list = [
             "models/gemini-2.5-flash", 
             "models/gemini-2.0-flash", 
-            "models/gemini-1.5-flash",
-            "models/gemini-pro"
+            "models/gemini-1.5-flash"
         ]
         
-        selected_model_name = None
-        for p_model in priority_list:
-            if p_model in available_models:
-                selected_model_name = p_model
-                break
-        
-        # Если ничего из списка не подошло, берем первую попавшуюся рабочую
-        if not selected_model_name and available_models:
-            selected_model_name = available_models[0]
-        
-        # Если совсем ничего нет (крайний случай)
-        if not selected_model_name:
-            selected_model_name = "models/gemini-1.5-flash"
+        selected_model_name = next((m for m in priority_list if m in available_models), 
+                                  available_models[0] if available_models else "models/gemini-1.5-flash")
 
         print(f"--- [LOG] Выбрана модель для игры: {selected_model_name}")
 
         SYSTEM_PROMPT = """
-        Ты — мудрый, добрый и вдохновляющий Мастер Подземелий (DM). 
-        Твоя цель — вести увлекательное, здоровое и безопасное фэнтезийное приключение в мире D&D 5e.
+        Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
+        Твоя цель — вести одно общее приключение для группы игроков в мире D&D 5e.
         
-        Твои правила:
-        1. Безопасность и доброта: Веди игру в стиле героических сказок. Никакой жестокости, вредных привычек или пугающих тем.
-        2. Атмосфера: Описывай красоту природы, магическое сияние и верную дружбу.
-        3. Помощь: Если игроки не знают, что делать, подсказывай им добрые и смелые варианты.
-        4. Игровой процесс: Проси кидать кубик d20 для проверок (на внимательность, доброту, ловкость или силу).
-        5. Язык: Общайся на русском языке, будь вежливым и эпическим Мастером.
+        Важные правила для работы в группе:
+        1. Различай игроков: Тебе будут присылать сообщения в формате "[Имя игрока]: сообщение". 
+           Запоминай, какой персонаж (раса, класс) принадлежит каждому игроку.
+        2. Обращайся по именам: Когда отвечаешь, обращайся к конкретным героям, чтобы все понимали, к кому ты обращаешься.
+        3. Командная работа: Поощряй игроков действовать сообща.
+        4. Безопасность и атмосфера: Веди игру в стиле добрых сказок и героических легенд. Никакой жестокости или мрачных тем.
+        5. Игровой процесс: Проси игроков кидать d20 для их действий.
+        6. Язык: Общайся на русском языке, будь вежливым и эпическим Мастером.
         """
         
         model = genai.GenerativeModel(
             model_name=selected_model_name,
             system_instruction=SYSTEM_PROMPT
         )
-        print(f"--- [LOG] Нейросеть успешно настроена на {selected_model_name}!")
+        print(f"--- [LOG] Нейросеть успешно настроена!")
     except Exception as e:
         print(f"--- [ERROR] Ошибка настройки нейросети: {e}")
 
@@ -92,7 +80,6 @@ def run_bot():
         print("--- [ERROR] TELEGRAM_TOKEN не найден.")
         return
 
-    # Сброс вебхуков для решения ошибки 409
     try:
         bot.delete_webhook(drop_pending_updates=True)
         print("--- [LOG] Очередь Telegram очищена.")
@@ -103,48 +90,48 @@ def run_bot():
     def send_welcome(message):
         welcome_text = (
             "Приветствую, герои! 🏰✨\n\n"
-            "Я нашел верный путь через туман и готов к приключениям! "
-            "Я ваш Мастер Подземелий. Вместе мы создадим историю о дружбе и отваге.\n\n"
-            "Кем вы хотите быть? Опишите своего героя (расу, класс) и начнем путь!"
+            "Я — ваш Мастер Подземелий. Теперь я умею различать каждого из вас по именам!\n\n"
+            "Пожалуйста, представьтесь по очереди: напишите свою расу и класс. "
+            "Например: 'Я эльф-маг по имени Лириэль'."
         )
         bot.reply_to(message, welcome_text)
 
     @bot.message_handler(func=lambda message: True)
     def handle_game_step(message):
         chat_id = message.chat.id
+        user_name = message.from_user.first_name or "Путешественник"
         
         if not model:
-            bot.reply_to(message, "Магия всё еще настраивается. Подождите минуту и попробуйте снова.")
+            bot.reply_to(message, "Магия всё еще настраивается. Попробуйте через минуту.")
             return
 
-        # Инициализируем сессию, если её нет
+        # Используем chat_id, чтобы вся группа участвовала в одной истории
         if chat_id not in game_sessions:
-            print(f"--- [LOG] Новое приключение для чата: {chat_id}")
+            print(f"--- [LOG] Начало приключения в группе: {chat_id}")
             game_sessions[chat_id] = model.start_chat(history=[])
+        
+        chat = game_sessions[chat_id]
         
         try:
             bot.send_chat_action(chat_id, 'typing')
-            response = game_sessions[chat_id].send_message(message.text)
+            
+            # Мы добавляем имя игрока к сообщению, чтобы ИИ знал, кто говорит
+            full_message = f"[{user_name}]: {message.text}"
+            
+            response = chat.send_message(full_message)
             
             if response and response.text:
                 bot.reply_to(message, response.text)
             else:
-                bot.reply_to(message, "Мастер глубоко задумался... Попробуйте другое действие!")
+                bot.reply_to(message, "Мастер задумался... Попробуйте еще раз.")
                 
         except Exception as e:
-            error_str = str(e)
-            print(f"--- [ERROR] Ошибка Gemini: {error_str}")
-            if "404" in error_str:
-                bot.reply_to(message, "Этот путь всё еще закрыт туманом (ошибка модели). Я пытаюсь найти обходную дорогу, попробуйте написать еще раз через минуту!")
-                # Пробуем перенастроить ИИ в фоне, если произошла ошибка 404
-                threading.Thread(target=setup_ai).start()
-            else:
-                bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
+            print(f"--- [ERROR] Gemini error: {e}")
+            bot.reply_to(message, "Магический туман скрыл путь. Попробуйте еще раз через мгновение!")
 
     print("--- [LOG] Бот начал слушать сообщения...")
     bot.infinity_polling(timeout=20, long_polling_timeout=10)
 
-# Запуск настройки и бота
 if TELEGRAM_TOKEN:
     setup_ai()
     threading.Thread(target=run_bot, daemon=True).start()
