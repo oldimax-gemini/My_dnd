@@ -1,27 +1,41 @@
 import os
+import threading
+from flask import Flask
 import telebot
 import google.generativeai as genai
-from telebot import types
 
-# --- НАСТРОЙКИ ---
-# Если вы запускаете локально, замените на свои строки. 
-# Если на сервере (Render/Railway), добавьте их в Environment Variables.
-TOKEN = os.environ.get('TELEGRAM_TOKEN', 'ВАШ_ТЕЛЕГРАМ_ТОКЕН')
-GEMINI_KEY = os.environ.get('GEMINI_KEY', 'ВАШ_GEMINI_API_KEY')
+# --- WEB SERVER FOR RENDER ---
+# Render expects a web service to listen on a port. 
+# We'll use Flask to provide a simple health check.
+app = Flask(__name__)
 
-# Инициализация Gemini
+@app.route('/')
+def health_check():
+    return "The D&D Master is awake and watching the realm!", 200
+
+def run_flask():
+    # Render provides the PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# --- TELEGRAM AND GEMINI CONFIGURATION ---
+# Get keys from environment variables (set these in Render Settings)
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+GEMINI_KEY = os.environ.get('GEMINI_KEY')
+
+# Initialize Gemini
 genai.configure(api_key=GEMINI_KEY)
 
-# Настройка модели (Системная инструкция для DM)
+# Systematic instruction for the AI to act as a D&D Master
 SYSTEM_PROMPT = """
-Ты — профессиональный Мастер Подземелий (DM) в мире D&D 5e. 
-Твоя задача: вести захватывающую, атмосферную и честную игру.
-Правила:
-1. Описывай окружение сочно: запахи, звуки, тени.
-2. Когда игрок совершает действие, требующее проверки, проси его кинуть кубик (или имитируй бросок сам, если игрок просит).
-3. Веди учет здоровья (HP) и инвентаря персонажей.
-4. Будь непредсказуемым: враги могут быть хитрыми, а NPC — иметь свои тайные цели.
-5. Пиши на русском языке, используя фэнтезийный стиль.
+Ты — мудрый и вдохновляющий Мастер Подземелий (DM). 
+Твоя цель — вести увлекательное фэнтезийное приключение в мире D&D 5e.
+Правила поведения:
+1. Создавай атмосферные описания: звуки леса, блеск сокровищ, таинственный шепот.
+2. Будь добрым наставником. Если игроки новички, подсказывай, какие навыки они могут использовать.
+3. Стимулируй воображение и творчество. Избегай жестокости, фокусируйся на героизме, дружбе и разгадывании тайн.
+4. Проси игроков бросать кубики (d20) для важных действий и описывай результат в зависимости от выпавшего числа.
+5. Веди игру на русском языке в вежливом и эпическом стиле.
 """
 
 model = genai.GenerativeModel(
@@ -29,49 +43,50 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_PROMPT
 )
 
-# Инициализация Бота
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Хранилище истории чатов (в памяти)
-# Для серьезных игр лучше использовать базу данных, но для начала хватит и этого.
-chat_sessions = {}
+# Simple in-memory session storage
+# In a production app, you might want to use a database
+game_sessions = {}
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    welcome_text = (
-        "Greetings, travelers! 🎭\n\n"
-        "Я — ваш верный Мастер Подземелий, воплощенный в кремнии и коде. "
-        "Готовы ли вы отправиться в приключение, которое воспевают барды?\n\n"
-        "Просто напишите, кто вы (раса, класс) и где начинается ваш путь, "
-        "или попросите меня придумать завязку!"
+    welcome_msg = (
+        "Приветствую, искатели приключений! 🏰✨\n\n"
+        "Я — ваш автоматизированный Мастер Подземелий. "
+        "Вместе мы создадим легенду! Опишите своего героя (расу и класс) "
+        "или просто скажите 'Начнем приключение!', и я перенесу вас в мир магии."
     )
-    bot.reply_to(message, welcome_text)
+    bot.reply_to(message, welcome_msg)
 
 @bot.message_handler(func=lambda message: True)
-def handle_game_step(message):
+def handle_game_play(message):
     chat_id = message.chat.id
     
-    # Создаем или получаем сессию для этого чата
-    if chat_id not in chat_sessions:
-        chat_sessions[chat_id] = model.start_chat(history=[])
+    # Start a new chat session with history if it doesn't exist
+    if chat_id not in game_sessions:
+        game_sessions[chat_id] = model.start_chat(history=[])
     
-    chat = chat_sessions[chat_id]
+    chat = game_sessions[chat_id]
     
     try:
-        # Показываем статус "печатает", чтобы игроки не скучали
+        # Visual feedback: "typing..."
         bot.send_chat_action(chat_id, 'typing')
         
-        # Отправляем сообщение в Gemini
+        # Send message to Gemini
         response = chat.send_message(message.text)
         
-        # Отправляем ответ игрокам
+        # Send AI response back to Telegram
         bot.reply_to(message, response.text)
         
     except Exception as e:
-        error_msg = "Магия дала сбой (ошибка API). Попробуйте еще раз или проверьте ключи доступа."
-        bot.send_message(chat_id, error_msg)
-        print(f"Error: {e}")
+        print(f"Error occurred: {e}")
+        bot.reply_to(message, "Ой! Похоже, в ткани мироздания возникла трещина (ошибка связи). Попробуйте еще раз через мгновение.")
 
 if __name__ == "__main__":
-    print("Мастер Подземелий проснулся и ждет игроков...")
+    # Start the Flask web server in a separate thread
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    print("D&D Master Bot is starting...")
+    # Start the Telegram bot polling
     bot.infinity_polling()
