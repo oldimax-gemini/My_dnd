@@ -39,9 +39,9 @@ if GEMINI_KEY:
             model_name="gemini-1.5-flash",
             system_instruction=SYSTEM_PROMPT
         )
-        print("Нейросеть успешно настроена.")
+        print("--- [LOG] Нейросеть Gemini успешно настроена.")
     except Exception as e:
-        print(f"Ошибка настройки нейросети: {e}")
+        print(f"--- [ERROR] Ошибка настройки Gemini: {e}")
 
 # Инициализация Бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
@@ -49,46 +49,50 @@ game_sessions = {}
 
 def run_bot():
     if not bot:
-        print("Ошибка: TOKEN не найден. Проверьте Environment Variables в Render.")
+        print("--- [ERROR] TOKEN не найден. Проверьте Environment Variables в Render.")
         return
 
-    # --- РЕШЕНИЕ КОНФЛИКТА 409 ---
-    # Мы пытаемся сбросить все старые соединения несколько раз
+    # Проверка валидности токена
+    try:
+        me = bot.get_me()
+        print(f"--- [LOG] Бот @{me.username} успешно авторизован в Telegram.")
+    except Exception as e:
+        print(f"--- [ERROR] Ошибка авторизации токена Telegram: {e}")
+        return
+
+    # Сброс вебхуков и старых обновлений
     for i in range(3):
         try:
-            print(f"Попытка {i+1}: Сброс старых соединений Telegram...")
+            print(f"--- [LOG] Попытка {i+1}: Очистка очереди сообщений...")
             bot.delete_webhook(drop_pending_updates=True)
-            time.sleep(2)
             break
         except Exception as e:
-            print(f"Ожидание освобождения токена... ({e})")
+            print(f"--- [WARNING] Не удалось сбросить очередь: {e}. Повтор...")
             time.sleep(5)
 
     @bot.message_handler(commands=['start', 'help'])
     def send_welcome(message):
         welcome_text = (
             "Приветствую, юные герои! 🏰✨\n\n"
-            "Я проснулся и готов к приключениям! Если я не отвечаю на обычные сообщения в группе, "
-            "убедитесь, что я администратор или у меня отключен Privacy Mode.\n\n"
-            "Кем вы хотите быть? Опишите героя, и мы начнем!"
+            "Я проснулся и готов к приключениям! Если я в группе, убедитесь, что я администратор.\n\n"
+            "Кем вы хотите быть? Опишите героя, и начнем путь!"
         )
         bot.reply_to(message, welcome_text)
 
     @bot.message_handler(commands=['ping'])
     def send_ping(message):
-        bot.reply_to(message, "Понг! Я на связи. Если это работает, значит проблема в общении с нейросетью.")
+        bot.reply_to(message, "Понг! Мастер на связи. Если вы видите это, связь с Telegram в порядке!")
 
     @bot.message_handler(func=lambda message: True)
     def handle_game_step(message):
         chat_id = message.chat.id
         
         if model is None:
-            bot.reply_to(message, "Магия временно недоступна. Проверьте настройки ключа Gemini в Render.")
+            bot.reply_to(message, "Магия временно недоступна (ошибка нейросети).")
             return
 
-        # Инициализируем сессию, если её нет
         if chat_id not in game_sessions:
-            print(f"Создание новой игровой сессии для чата {chat_id}")
+            print(f"--- [LOG] Новая сессия для чата: {chat_id}")
             game_sessions[chat_id] = model.start_chat(history=[])
         
         try:
@@ -101,19 +105,18 @@ def run_bot():
                 bot.reply_to(message, "Мастер задумался... Попробуйте другое действие!")
                 
         except Exception as e:
-            print(f"Ошибка API Gemini: {e}")
-            bot.reply_to(message, "Похоже, магический туман скрыл путь. Попробуйте еще раз через минуту!")
+            print(f"--- [ERROR] Ошибка Gemini API: {e}")
+            bot.reply_to(message, "Магический туман скрыл путь. Повторите ваше действие чуть позже.")
 
-    print("Бот готов к приключениям и слушает сообщения!")
+    print("--- [LOG] Бот запускает бесконечный цикл прослушивания (Polling)...")
     try:
         bot.infinity_polling(timeout=20, long_polling_timeout=10)
     except Exception as e:
-        print(f"Ошибка поллинга: {e}")
-        time.sleep(5)
+        print(f"--- [ERROR] Критическая ошибка поллинга: {e}")
 
 # Запускаем бота фоном
 if TELEGRAM_TOKEN:
-    # Важно: daemon=True позволяет потоку завершиться при выходе основной программы
+    print("--- [LOG] Запуск фонового потока для бота...")
     threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
